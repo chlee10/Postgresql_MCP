@@ -1,0 +1,17 @@
+[project]
+name = "sqlcl-mcp"
+version = "0.1.0"
+description = "MCP server for Oracle SQLcl integration"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "pywinpty (>=3.0.2,<4.0.0)",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+sqlcl-mcp = "sqlcl_mcp.server:main"

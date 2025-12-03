@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "sqlcl": {
+      "command": "poetry",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "sqlcl_mcp.server"
+      ],
+      "cwd": "C:\\Users\\chiho\\OneDrive\\AI_PJTs\\Oracle\\SQLcl_MCP"
+    }
+  }
+}
