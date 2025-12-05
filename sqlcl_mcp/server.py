@@ -1,11 +1,14 @@
 """
-SQLcl MCP Server - stdio 방식
+SQLcl MCP Server - SSE/stdio 방식
 
 스레드 기반 non-blocking I/O로 SQLcl과 안정적으로 통신
-MCP 프로토콜을 통해 Claude Desktop, VS Code 등과 연동
+MCP 프로토콜을 통해 Claude Desktop, VS Code, Streamlit 등과 연동
 
 사용법:
-    poetry run python -m sqlcl_mcp.server
+    SSE 모드 (기본): poetry run python -m sqlcl_mcp.server
+    stdio 모드:      poetry run python -m sqlcl_mcp.server --stdio
+
+버전: 2.1.0
 """
 
 import asyncio
@@ -21,11 +24,18 @@ from typing import Optional
 # MCP imports
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
+
+# SSE/HTTP imports
+from starlette.applications import Starlette
+from starlette.routing import Route
+from starlette.responses import JSONResponse
+import uvicorn
 
 # Config import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import SQLCL_PATH, DB_CONNECTION, SQLCL_TIMEOUT, LOG_LEVEL
+from config import SQLCL_PATH, DB_CONNECTION, SQLCL_TIMEOUT, LOG_LEVEL, SERVER_HOST, SERVER_PORT
 
 # =============================================================================
 # Logging
@@ -136,12 +146,14 @@ class SQLclSession:
             initial = self.reader.read_available(1.0)
             logger.debug(f"Initial output: {initial[:200] if initial else 'None'}")
             
-            # SQL 설정 명령 실행
+            # SQL 설정 명령 실행 - CSV format (헤더 없음, 후처리로 추가)
             init_commands = """SET PAGESIZE 50000
 SET LINESIZE 32767
 SET LONG 50000
 SET FEEDBACK OFF
 SET HEADING ON
+SET VERIFY OFF
+SET ECHO OFF
 SET SQLFORMAT csv
 """
             self.process.stdin.write(init_commands)
@@ -226,6 +238,20 @@ SET SQLFORMAT csv
         for line in lines:
             # 스킵 패턴
             if any(p in line for p in skip_patterns):
+                continue
+            
+            # SQL 문장 번호 라인 제거 (예: "  2  SELECT ...", "  3* COUNT...", "  4* TO_CHAR...")
+            stripped = line.lstrip()
+            if stripped:
+                # 숫자 또는 숫자*로 시작하는 SQL 스크립트 라인 스킵
+                if re.match(r'^\d+\*?\s+', stripped):
+                    # CSV 데이터가 아닌 경우만 스킵 (CSV는 따옴표로 시작하거나 숫자,숫자 형태)
+                    rest = re.sub(r'^\d+\*?\s+', '', stripped)
+                    if not rest.startswith('"') and not re.match(r'^[\d.]+,', rest):
+                        continue
+            
+            # 구분선 제거 (___로만 이루어진 라인)
+            if re.match(r'^[\s_]+$', line):
                 continue
             
             # ANSI escape 코드 제거
@@ -498,8 +524,71 @@ async def cleanup():
     logger.info("Server shutdown complete")
 
 
-async def main():
-    """메인"""
+# =============================================================================
+# SSE Server (HTTP 방식 - 상주 서버)
+# =============================================================================
+sse_transport = SseServerTransport("/messages")
+
+async def handle_status(request):
+    """상태 확인"""
+    session = sql_session if (sql_session and sql_session.connected) else sql_fallback
+    return JSONResponse({
+        "status": "running",
+        "connected": session.connected if session else False,
+        "mode": "persistent" if (sql_session and sql_session.connected) else "file"
+    })
+
+async def lifespan(app):
+    """앱 시작/종료"""
+    await initialize()
+    yield
+    await cleanup()
+
+class SSEApp:
+    """SSE ASGI 앱 - connect_sse와 handle_post_message 처리"""
+    
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        method = scope.get("method", "GET")
+        
+        if path == "/sse" and method == "GET":
+            # SSE 연결
+            async with sse_transport.connect_sse(scope, receive, send) as streams:
+                await server.run(
+                    streams[0], 
+                    streams[1], 
+                    server.create_initialization_options()
+                )
+        elif path == "/messages" and method == "POST":
+            # POST 메시지 처리
+            await sse_transport.handle_post_message(scope, receive, send)
+        else:
+            # 404
+            await send({
+                "type": "http.response.start",
+                "status": 404,
+                "headers": [[b"content-type", b"text/plain"]],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b"Not Found",
+            })
+
+def create_sse_app():
+    """SSE 앱 생성"""
+    from starlette.routing import Mount
+    
+    return Starlette(
+        routes=[
+            Route("/status", endpoint=handle_status),
+            Mount("/", app=SSEApp()),
+        ],
+        lifespan=lifespan
+    )
+
+
+async def main_stdio():
+    """stdio 모드 (기존)"""
     await initialize()
     
     logger.info("Starting MCP stdio server...")
@@ -511,11 +600,38 @@ async def main():
             await cleanup()
 
 
+def main_sse():
+    """SSE 모드 (HTTP 상주 서버)"""
+    host = SERVER_HOST
+    port = SERVER_PORT
+    
+    print(f"""
+╔══════════════════════════════════════════════════════════╗
+║         SQLcl MCP Server (SSE Mode)                      ║
+╠══════════════════════════════════════════════════════════╣
+║  Server: http://{host}:{port}                            ║
+║                                                          ║
+║  Endpoints:                                              ║
+║    GET  /sse      - SSE connection for MCP               ║
+║    POST /messages - MCP message handler                  ║
+║    GET  /status   - Server status                        ║
+╚══════════════════════════════════════════════════════════╝
+    """)
+    
+    app = create_sse_app()
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Server interrupted")
-    except Exception as e:
-        logger.exception(f"Server error: {e}")
+    # --stdio 옵션으로 stdio 모드 실행 (Claude Desktop 연동용)
+    if "--stdio" in sys.argv:
+        try:
+            asyncio.run(main_stdio())
+        except KeyboardInterrupt:
+            logger.info("Server interrupted")
+        except Exception as e:
+            logger.exception(f"Server error: {e}")
         sys.exit(1)
+    else:
+        # 기본: SSE 모드 (Streamlit UI 사용)
+        main_sse()
