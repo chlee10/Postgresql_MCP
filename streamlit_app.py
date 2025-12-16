@@ -183,6 +183,15 @@ def parse_csv_with_headers(csv_output: str, sql: str) -> pd.DataFrame:
     
     try:
         df = pd.read_csv(StringIO(csv_output), header=None, names=headers, quotechar='"', on_bad_lines='warn')
+        
+        # 첫 번째 행이 헤더와 동일한 경우 제거 (SQLcl이 헤더를 데이터로 포함하는 경우)
+        if len(df) > 0:
+            first_row = df.iloc[0].astype(str).str.strip().str.upper().tolist()
+            header_upper = [str(h).strip().upper() for h in headers]
+            if first_row == header_upper:
+                df = df.iloc[1:].reset_index(drop=True)
+                logger.info("Removed duplicate header row from CSV data")
+        
         return df
     except Exception as e:
         logger.warning(f"CSV parsing error: {e}")
@@ -416,24 +425,30 @@ def get_table_list() -> list:
 # =============================================================================
 def clean_sql_response(content: str) -> str:
     """AI 응답에서 SQL 추출"""
+    # 1. Markdown Code Block 추출
     if "```" in content:
-        match = re.search(r"```(?:sql)?\s*(.*?)```", content, re.DOTALL)
-        content = match.group(1).strip() if match else content.replace("```sql", "").replace("```", "").strip()
-    
-    upper = content.upper()
+        match = re.search(r"```(?:sql)?\s*(.*?)```", content, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+            
+    # 2. SQL 키워드로 시작하는 부분 찾기
     valid_starts = ["SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"]
+    upper = content.upper()
     
-    if not any(upper.startswith(k) for k in valid_starts):
-        match = re.search(r"(SELECT|WITH|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s+.*", content, re.DOTALL | re.IGNORECASE)
+    # 이미 SQL로 시작하면 그대로 진행
+    if any(upper.startswith(k) for k in valid_starts):
+        pass
+    else:
+        # 중간에 SQL이 있는지 찾기
+        pattern = r"(" + "|".join(valid_starts) + r")\s+.*"
+        match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
         if match:
             content = match.group(0)
     
-    # SQL 끝에 붙은 불필요한 텍스트 제거 (예: OK, Done, 등)
-    # 세미콜론 이후 또는 마지막 유효한 SQL 키워드 이후의 텍스트 제거
-    content = re.sub(r';\s*\w+\s*$', ';', content)  # "; OK" -> ";"
+    # 3. 불필요한 텍스트 제거
+    content = re.sub(r';\s*\w+\s*$', ';', content)
     content = re.sub(r'\s+(OK|Done|Success|완료)\.?\s*$', '', content, flags=re.IGNORECASE)
     
-    # 끝에 세미콜론이 없으면 추가하지 않음 (SQLcl이 알아서 처리)
     return content.strip()
 
 
@@ -441,8 +456,32 @@ def is_valid_sql(content: str) -> bool:
     """SQL 유효성 검사"""
     if not content:
         return False
+    
+    # 마크다운 볼드체 등 제거 및 공백 제거
+    clean_content = content.replace('**', '').replace('*', '').strip()
+    
+    # 물음표로 끝나면 SQL이 아닐 확률이 높음 (대화형 질문)
+    if clean_content.endswith('?'):
+        return False
+        
     upper = content.strip().upper()
-    return any(upper.startswith(k) for k in ["SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"])
+    valid_starts = ["SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"]
+    
+    if not any(upper.startswith(k) for k in valid_starts):
+        return False
+        
+    # WITH로 시작하는 경우, CTE인지 일반 문장인지 구별
+    if upper.startswith("WITH"):
+        # CTE는 보통 "WITH 이름 AS" 형태임
+        # "WITH" 뒤에 공백이 있고, 그 뒤에 식별자가 오고, 그 뒤에 "AS"가 와야 함
+        # 간단하게 " AS " 또는 " AS(" 가 초반에 나오는지 확인
+        # "with a specific query?" 에는 " AS "가 없음
+        # 줄바꿈 후 AS가 올 수도 있음
+        check_range = upper[:100] # 처음 100자만 확인
+        if " AS " not in check_range and " AS(" not in check_range and "\nAS" not in check_range:
+            return False
+            
+    return True
 
 
 def generate_sql_from_nl(nl_query: str, table_list: list, model_name: str, chat_history=None) -> str:

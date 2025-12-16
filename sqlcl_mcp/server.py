@@ -113,6 +113,11 @@ class SQLclSession:
         
     async def start(self) -> bool:
         """SQLcl 세션 시작"""
+        async with self._lock:
+            return await self._start_internal()
+
+    async def _start_internal(self) -> bool:
+        """내부 세션 시작 로직 (Lock 없음)"""
         try:
             # 환경 변수 설정
             env = os.environ.copy()
@@ -163,7 +168,7 @@ SET SQLFORMAT csv
             self.reader.read_available(0.5)  # 설정 출력 버리기
             
             # 연결 테스트
-            test_result = await self.execute("SELECT 'CONNECTED' AS STATUS FROM DUAL")
+            test_result = await self._execute_internal("SELECT 'CONNECTED' AS STATUS FROM DUAL", timeout=10.0)
             if test_result and 'CONNECTED' in test_result:
                 self.connected = True
                 logger.info("[OK] SQLcl session connected!")
@@ -177,54 +182,79 @@ SET SQLFORMAT csv
             return False
     
     async def execute(self, sql: str, timeout: float = 60.0) -> str:
-        """SQL 실행"""
+        """SQL 실행 (재시도 로직 포함)"""
         async with self._lock:
-            if not self.process or not self.reader:
-                return "ERROR: Session not started"
+            result = await self._execute_internal(sql, timeout)
             
-            if self.process.poll() is not None:
-                return "ERROR: SQLcl process has terminated"
+            # 연결 끊김 에러 체크 및 재시도
+            if "ORA-17002" in result or "ORA-03113" in result or "socket write error" in result:
+                logger.warning(f"Connection lost ({result[:50]}...), restarting session...")
+                
+                # 세션 종료
+                if self.reader: self.reader.stop()
+                if self.process: 
+                    try: self.process.terminate()
+                    except: pass
+                self.process = None
+                self.connected = False
+                
+                # 세션 재시작
+                if await self._start_internal():
+                     logger.info("Session restarted, retrying query...")
+                     result = await self._execute_internal(sql, timeout)
+                else:
+                     result = f"ERROR: Failed to restart session after connection loss. Original error: {result}"
             
-            try:
-                sql = sql.strip()
-                if not sql.endswith(';'):
-                    sql += ';'
+            return result
+
+    async def _execute_internal(self, sql: str, timeout: float) -> str:
+        """내부 SQL 실행 로직 (Lock 없음)"""
+        if not self.process or not self.reader:
+            return "ERROR: Session not started"
+        
+        if self.process.poll() is not None:
+            return "ERROR: SQLcl process has terminated"
+        
+        try:
+            sql = sql.strip()
+            if not sql.endswith(';'):
+                sql += ';'
+            
+            # 이전 출력 비우기
+            self.reader.read_available(0.1)
+            
+            # SQL 실행
+            logger.debug(f"Executing: {sql[:100]}")
+            self.process.stdin.write(sql + '\n')
+            self.process.stdin.flush()
+            
+            # 결과 수집 (여러 번 시도)
+            output_parts = []
+            empty_count = 0
+            start_time = asyncio.get_event_loop().time()
+            
+            while asyncio.get_event_loop().time() - start_time < timeout:
+                await asyncio.sleep(0.3)
+                data = self.reader.read_available(0.5)
                 
-                # 이전 출력 비우기
-                self.reader.read_available(0.1)
-                
-                # SQL 실행
-                logger.debug(f"Executing: {sql[:100]}")
-                self.process.stdin.write(sql + '\n')
-                self.process.stdin.flush()
-                
-                # 결과 수집 (여러 번 시도)
-                output_parts = []
-                empty_count = 0
-                start_time = asyncio.get_event_loop().time()
-                
-                while asyncio.get_event_loop().time() - start_time < timeout:
-                    await asyncio.sleep(0.3)
-                    data = self.reader.read_available(0.5)
-                    
-                    if data:
-                        output_parts.append(data)
-                        empty_count = 0
-                    else:
-                        empty_count += 1
-                        if empty_count >= 3 and output_parts:
-                            break
-                
-                # 결과 정리
-                result = ''.join(output_parts)
-                result = self._clean_output(result)
-                
-                logger.debug(f"Result: {result[:100] if result else 'None'}")
-                return result
-                
-            except Exception as e:
-                logger.exception(f"Execute error: {e}")
-                return f"ERROR: {str(e)}"
+                if data:
+                    output_parts.append(data)
+                    empty_count = 0
+                else:
+                    empty_count += 1
+                    if empty_count >= 3 and output_parts:
+                        break
+            
+            # 결과 정리
+            result = ''.join(output_parts)
+            result = self._clean_output(result)
+            
+            logger.debug(f"Result: {result[:100] if result else 'None'}")
+            return result
+            
+        except Exception as e:
+            logger.exception(f"Execute error: {e}")
+            return f"ERROR: {str(e)}"
     
     def _clean_output(self, output: str) -> str:
         """출력 정리"""
