@@ -42,3 +42,6 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# Local Archives
+archive/

@@ -1,14 +1,11 @@
 {
   "mcpServers": {
-    "sqlcl": {
-      "command": "poetry",
+    "postgresql": {
+      "command": "C:\\Users\\chiho\\OneDrive\\AI_PJTs\\RDB\\PostgreSQL_MCP\\.venv\\Scripts\\python.exe",
       "args": [
-        "run",
-        "python",
         "-m",
-        "sqlcl_mcp.server"
-      ],
-      "cwd": "C:\\Users\\chiho\\OneDrive\\AI_PJTs\\Oracle\\SQLcl_MCP"
+        "postgresql_mcp.server"
+      ]
     }
   }
 }
