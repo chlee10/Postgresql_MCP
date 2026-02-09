@@ -1,17 +1,17 @@
 [tool.poetry]
 name = "postgresql-mcp"
-version = "0.1.0"
-description = "MCP server for PostgreSQL integration"
+version = "1.1.0"
+description = "MCP server for PostgreSQL — 자연어로 DB를 탐색하는 AI Explorer"
 authors = ["User <user@example.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
-mcp = "^1.0.0"
+mcp = "^1.26.0"
 psycopg = {extras = ["binary", "pool"], version = "^3.2.0"}
 python-dotenv = "^1.0.0"
-uvicorn = "^0.20.0"
-starlette = "^0.30.0"
+uvicorn = "^0.40.0"
+starlette = "^0.52.1"
 streamlit = "^1.54.0"
 plotly = "^6.5.2"
 httpx = "^0.28.1"

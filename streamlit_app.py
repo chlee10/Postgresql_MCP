@@ -1,9 +1,12 @@
 """
-PostgreSQL AI Explorer - 자연어로 PostgreSQL DB 탐색 (MCP SSE 기반)
+PostgreSQL MCP AI Explorer — Streamlit 웹 UI
+
+자연어로 PostgreSQL 데이터베이스를 탐색하고 시각화하는 채팅 인터페이스.
+MCP SSE 모드로 백엔드 서버와 통신합니다.
 
 사용법:
     1. MCP 서버 시작: poetry run python -m postgresql_mcp.server --sse
-    2. Streamlit 앱: streamlit run streamlit_app.py
+    2. Streamlit 앱 : poetry run streamlit run streamlit_app.py
 """
 
 import streamlit as st

@@ -5,7 +5,10 @@
       "args": [
         "-m",
         "postgresql_mcp.server"
-      ]
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\Users\\chiho\\OneDrive\\AI_PJTs\\RDB\\PostgreSQL_MCP"
+      }
     }
   }
 }

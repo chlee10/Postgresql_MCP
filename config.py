@@ -1,19 +1,29 @@
 """
-PostgreSQL AI Explorer - Configuration
+PostgreSQL MCP AI Explorer — 통합 설정 파일
 
 모든 설정값을 한 곳에서 관리합니다.
-환경 변수로 오버라이드 가능합니다.
+.env 파일 또는 환경 변수로 개별 값을 오버라이드할 수 있습니다.
+
+섹션:
+  1. Database     — PostgreSQL 접속 정보
+  2. MCP Server   — MCP 서버 호스트/포트
+  3. Streamlit    — 웹 UI 포트
+  4. AI           — 모델 목록, 프롬프트
+  5. Prompts      — SQL 생성 규칙
 """
 
 import os
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv(override=True)
+# Ensure .env is loaded from the project root (where config.py resides)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 
 # =============================================================================
-# Database Configuration
+# 1. Database Configuration  (필수: .env 에 DB_PASSWORD 설정)
 # =============================================================================
 # PostgreSQL Connection Settings
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -34,7 +44,7 @@ if not DB_CONNECTION:
 
 
 # =============================================================================
-# MCP Server Configuration
+# 2. MCP Server Configuration  (stdio 모드에서는 사용되지 않음)
 # =============================================================================
 SERVER_HOST = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
 SERVER_PORT = int(os.getenv("MCP_SERVER_PORT", "8765"))
@@ -43,12 +53,12 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 
 # =============================================================================
-# Streamlit Configuration
+# 3. Streamlit Configuration
 # =============================================================================
 STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", "8501"))
 
 # =============================================================================
-# AI Configuration
+# 4. AI Configuration  (Streamlit 웹 UI에서 사용)
 # =============================================================================
 # Models
 AI_MODELS = [
@@ -80,16 +90,16 @@ PAGE_CONFIG = {
 }
 
 # App Version
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
-# Chart Keywords (for auto-viz)
-CHART_KEYWORDS = ["차트", "그래프", "시각화", "보여줘", "그려줘", "chart", "plot", "graph"]
+# 차트 키워드 — 자연어 쿼리에서 시각화 요청을 자동 감지합니다.
+CHART_KEYWORDS = ["차트", "그래프", "시각화", "그려줘", "chart", "plot", "graph"]
 LINE_CHART_KEYWORDS = ["추세", "변화", "흐름", "라인", "선", "trend", "line", "time"]
 PIE_CHART_KEYWORDS = ["비율", "비중", "점유율", "파이", "원형", "ratio", "share", "pie"]
 AREA_CHART_KEYWORDS = ["누적", "영역", "면적", "area", "stack"]
 
 # =============================================================================
-# Prompts
+# 5. Prompts  (자연어 → SQL 변환 규칙)
 # =============================================================================
 
 DB_SCHEMA_INFO = """

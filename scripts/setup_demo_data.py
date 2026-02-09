@@ -1,3 +1,17 @@
+"""
+PostgreSQL MCP AI Explorer — 데모 데이터 생성 스크립트
+
+한국형 '인사관리' 테이블을 생성하고 약 50여 명의 가상 사원 데이터를 채웁니다.
+
+실행: poetry run python scripts/setup_demo_data.py
+
+단계:
+  1. 테이블 초기화 + 기본 사원 삽입 (43명)
+  2. 부서명 '부' → '팀' 변경
+  3. 2026년 신입사원 10명 추가
+  4. 부서별 팀장/부장 승진
+  5. 급여·전화번호·이메일·성별·생년월일 보충
+"""
 
 import psycopg
 import os
@@ -73,11 +87,11 @@ def calculate_salary(rank, years_service):
 # =============================================================================
 
 def step01_init_table(cur):
-    print("STEP 1: Init Table & Basic Data...")
+    print("STEP 1: Init Table with '사번' PK...")
     cur.execute("DROP TABLE IF EXISTS 인사관리 CASCADE;")
     cur.execute("""
         CREATE TABLE 인사관리 (
-            id SERIAL PRIMARY KEY,
+            사번 VARCHAR(20) PRIMARY KEY,
             이름 VARCHAR(50),
             부서 VARCHAR(50),
             직급 VARCHAR(50),
@@ -89,9 +103,10 @@ def step01_init_table(cur):
             생년월일 DATE
         );
     """)
-    # Basic data
-    cur.execute("""
-        INSERT INTO 인사관리 (이름, 부서, 직급, 입사일) VALUES
+    
+    # Raw data tuple list
+    # (Name, Dept, Rank, JoinDate)
+    raw_data = [
         ('김철수', '영업부', '과장', '2020-01-15'), ('이영희', '인사부', '대리', '2021-03-20'),
         ('박민준', '개발부', '과장', '2019-06-10'), ('정수진', '마케팅부', '사원', '2022-01-08'),
         ('최동욱', '재무부', '대리', '2021-09-15'), ('황미경', '영업부', '사원', '2022-05-01'),
@@ -113,8 +128,33 @@ def step01_init_table(cur):
         ('홍준영', '개발부', '과장', '2019-05-10'), ('성은미', '인사부', '사원', '2023-02-10'),
         ('구지훈', '영업부', '대리', '2021-03-25'), ('송수현', '마케팅부', '과장', '2020-08-15'),
         ('하준호', '개발부', '사원', '2022-04-08'), ('양현정', '재무부', '대리', '2021-09-20'),
-        ('노지은', '영업부', '대리', '2021-08-01');
-    """)
+        ('노지은', '영업부', '대리', '2021-08-01')
+    ]
+    
+    # Sort by Join Date for consistent ID generation
+    # Sort key: Join Date (string YYYY-MM-DD -> datetime)
+    sorted_data = sorted(raw_data, key=lambda x: x[3])
+    
+    # Counter per year
+    year_counters = {}
+    
+    print(f"Inserting {len(sorted_data)} initial rows with 사번...")
+    
+    for name, dept, rank, join_str in sorted_data:
+        join_date = datetime.strptime(join_str, "%Y-%m-%d").date()
+        year = join_date.year
+        
+        # Increment counter for this year
+        seq = year_counters.get(year, 0) + 1
+        year_counters[year] = seq
+        
+        # Generate 사번: YYYY + 00N
+        emp_id = f"{year}{seq:03d}"
+        
+        cur.execute("""
+            INSERT INTO 인사관리 (사번, 이름, 부서, 직급, 입사일)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (emp_id, name, dept, rank, join_date))
 
 def step02_rename_teams(cur):
     print("STEP 2: Rename Departments to Teams...")
@@ -129,13 +169,22 @@ def step03_new_employees_2026(cur):
     cur.execute("SELECT DISTINCT 부서 FROM 인사관리")
     depts = [r[0] for r in cur.fetchall()]
     
-    for name, gender in new_names:
+    # Get current max sequence for 2026
+    cur.execute("SELECT COUNT(*) FROM 인사관리 WHERE EXTRACT(YEAR FROM 입사일) = 2026")
+    start_seq = cur.fetchone()[0]
+    
+    for i, (name, gender) in enumerate(new_names):
         dept = random.choice(depts)
         join_date = date(2026, 1, 1) + timedelta(days=random.randint(0, 40))
+        
+        # Generate ID
+        seq = start_seq + i + 1
+        emp_id = f"2026{seq:03d}"
+        
         cur.execute("""
-            INSERT INTO 인사관리 (이름, 부서, 직급, 입사일, 성별)
-            VALUES (%s, %s, '사원', %s, %s)
-        """, (name, dept, join_date, gender))
+            INSERT INTO 인사관리 (사번, 이름, 부서, 직급, 입사일, 성별)
+            VALUES (%s, %s, %s, '사원', %s, %s)
+        """, (emp_id, name, dept, join_date, gender))
 
 def step04_promote_ranks(cur):
     print("STEP 4: Promote Leaders (Team Lead, Manager)...")
@@ -143,24 +192,24 @@ def step04_promote_ranks(cur):
     depts = [r[0] for r in cur.fetchall()]
     
     for dept in depts:
-        cur.execute("SELECT id, 이름 FROM 인사관리 WHERE 부서 = %s ORDER BY 입사일 ASC", (dept,))
+        cur.execute("SELECT 사번, 이름 FROM 인사관리 WHERE 부서 = %s ORDER BY 입사일 ASC", (dept,))
         emp_list = cur.fetchall()
         
         # Team Lead (1st)
         if len(emp_list) >= 1:
-            cur.execute("UPDATE 인사관리 SET 직급 = '팀장' WHERE id = %s", (emp_list[0][0],))
+            cur.execute("UPDATE 인사관리 SET 직급 = '팀장' WHERE 사번 = %s", (emp_list[0][0],))
         # Manager (2nd)
         if len(emp_list) >= 2:
-            cur.execute("UPDATE 인사관리 SET 직급 = '부장' WHERE id = %s", (emp_list[1][0],))
+            cur.execute("UPDATE 인사관리 SET 직급 = '부장' WHERE 사번 = %s", (emp_list[1][0],))
         # Senior (3rd, 4th)
         if len(emp_list) >= 3:
             count = 2 if len(emp_list) >= 4 else 1
             for i in range(count):
-                cur.execute("UPDATE 인사관리 SET 직급 = '차장' WHERE id = %s", (emp_list[2+i][0],))
-
+                cur.execute("UPDATE 인사관리 SET 직급 = '차장' WHERE 사번 = %s", (emp_list[2+i][0],))
+                
 def step05_fill_details(cur):
     print("STEP 5: Fill details (Salary, Email, Phone, Age, Gender)...")
-    cur.execute("SELECT id, 이름, 직급, 입사일, 성별, 생년월일 FROM 인사관리")
+    cur.execute("SELECT 사번, 이름, 직급, 입사일, 성별, 생년월일 FROM 인사관리")
     rows = cur.fetchall()
     
     for row in rows:
@@ -194,7 +243,7 @@ def step05_fill_details(cur):
         cur.execute("""
             UPDATE 인사관리
             SET 성별 = %s, 생년월일 = %s, 전화번호 = %s, 이메일 = %s, 급여 = %s
-            WHERE id = %s
+            WHERE 사번 = %s
         """, (gender, birth, phone, email, salary, emp_id))
 
 def main():

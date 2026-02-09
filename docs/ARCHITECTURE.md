@@ -1,6 +1,6 @@
-# SQLcl MCP Server - 기술 구조 및 사양
+# PostgreSQL MCP AI Explorer — 기술 구조 및 사양
 
-> 버전: 2.1.0 | 최종 수정: 2025-12-03
+> 버전: 1.1.0 | 최종 수정: 2026-02-09
 
 ---
 
@@ -8,14 +8,14 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Client Layer                                    │
+│                              Client Layer                                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐              │
-│  │  Streamlit UI   │  │  Claude Desktop │  │  VS Code        │              │
+│  │  Streamlit UI   │  │  Claude Desktop │  │  VS Code /      │              │
 │  │  (Port 8501)    │  │  (stdio)        │  │  MCP Client     │              │
 │  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘              │
 │           │                    │                    │                        │
-│           │ SSE/HTTP           │ stdio              │ SSE/HTTP              │
+│           │ SSE/HTTP           │ stdio              │ stdio/SSE             │
 │           ▼                    ▼                    ▼                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                              MCP Server Layer                                │
@@ -24,38 +24,32 @@
 │  │                    MCP Server (server.py)                           │    │
 │  │  ┌─────────────────┐              ┌─────────────────┐               │    │
 │  │  │  SSE Transport  │              │ stdio Transport │               │    │
-│  │  │  (기본 모드)     │              │ (--stdio 옵션)  │               │    │
+│  │  │  (--sse 옵션)   │              │ (기본 모드)     │               │    │
 │  │  │  Port: 8765     │              │                 │               │    │
 │  │  └─────────────────┘              └─────────────────┘               │    │
 │  │                                                                      │    │
 │  │  ┌─────────────────────────────────────────────────────────────┐    │    │
 │  │  │                    MCP Tools                                 │    │    │
-│  │  │  • execute_sql      - SQL 쿼리 실행                          │    │    │
-│  │  │  • get_tables       - 테이블 목록 조회                        │    │    │
-│  │  │  • describe_table   - 테이블 구조 조회                        │    │    │
-│  │  │  • get_status       - 연결 상태 확인                          │    │    │
+│  │  │  • query           - SQL 쿼리 실행 (결과 JSON)               │    │    │
+│  │  │  • list_tables     - 테이블 목록 조회                         │    │    │
+│  │  │  • describe_table  - 테이블 컬럼 구조 조회                    │    │    │
 │  │  └─────────────────────────────────────────────────────────────┘    │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                              Session Layer                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │              SQLcl Persistent Session (SQLclSession)                │    │
-│  │  • subprocess.Popen으로 SQLcl 프로세스 유지                         │    │
-│  │  • stdin/stdout 파이프로 명령 전송/결과 수신                         │    │
-│  │  • CSV 형식 출력 (SET SQLFORMAT csv)                                │    │
-│  │  • 타임아웃: 60초 (설정 가능)                                        │    │
-│  └────────────────────────────────┬────────────────────────────────────┘    │
-│                                   │                                          │
-│                                   │ JDBC                                     │
-│                                   ▼                                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                              Database Layer                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                         Oracle Database                              │    │
-│  │  • Connection: user/password@host:port/service                       │    │
-│  │  • 주요 테이블: INMAST, ZME, HRM_DEPT, INTONG                        │    │
+│  │              PostgresManager (psycopg 3 + AsyncConnectionPool)     │    │
+│  │  • 비동기 커넥션 풀 (min_size=1, max_size=10)                       │    │
+│  │  • dict_row 팩토리 — 결과를 Dict[str, Any] 리스트로 반환            │    │
+│  └────────────────────────────┬────────────────────────────────────────┘    │
+│                               │                                              │
+│                               │ TCP (libpq)                                  │
+│                               ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                         PostgreSQL Database                          │    │
+│  │  • Connection: postgresql://user:password@host:port/dbname           │    │
+│  │  • 주요 테이블: 인사관리 (한국형 인사 데모 데이터)                     │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -64,7 +58,7 @@
 
 ## 🔄 데이터 흐름
 
-### 1. 자연어 → SQL 변환 흐름
+### 1. 자연어 → SQL 변환 흐름 (Streamlit)
 
 ```
 ┌──────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────────┐
@@ -77,15 +71,22 @@
 
 ```
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ Streamlit UI │───►│ MCP Client   │───►│ MCP Server   │───►│ SQLcl Session│
-│ (SSE 요청)   │    │ (httpx)      │    │ (Starlette)  │    │ (subprocess) │
+│ Streamlit UI │───►│ MCP Client   │───►│ MCP Server   │───►│ PostgreSQL   │
+│ (SSE 요청)   │    │ (mcp SDK)    │    │ (Starlette)  │    │ (psycopg 3)  │
 └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
                                                                     │
                                                                     ▼
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ 차트/테이블   │◄───│ DataFrame    │◄───│ CSV 파싱     │◄───│ Oracle DB    │
+│ 차트/테이블   │◄───│ DataFrame    │◄───│ JSON 파싱    │◄───│ dict_row     │
 │ (Plotly)     │    │ (Pandas)     │    │              │    │ (결과 반환)  │
 └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘
+```
+
+### 3. Claude Desktop 직접 연동 (stdio)
+
+```
+Claude Desktop ◄──stdin/stdout──► MCP Server ◄──psycopg──► PostgreSQL
+                  (JSON-RPC)         (server.py)              (DB)
 ```
 
 ---
@@ -96,41 +97,44 @@
 
 | 파일 | 역할 | 주요 클래스/함수 |
 |------|------|------------------|
-| `server.py` | MCP 서버 | `SQLclSession`, `execute_sql()`, `run_sse_server()` |
+| `postgresql_mcp/server.py` | MCP 서버 | `PostgresManager`, `MCPServer`, `main()` |
 | `streamlit_app.py` | 웹 UI | `display_data()`, `display_chart()`, `generate_sql_from_nl()` |
-| `config.py` | 설정 관리 | 환경변수, DB 스키마, SQL 생성 규칙 |
+| `config.py` | 통합 설정 | 환경변수, DB 스키마, AI 모델, SQL 생성 규칙 |
+| `scripts/setup_demo_data.py` | 데모 데이터 | 인사관리 테이블 생성 + 50여 명 데이터 삽입 |
 
 ### server.py 상세
 
 ```python
-class SQLclSession:
-    """SQLcl 영속 세션 관리"""
-    
-    def __init__(self):
-        self.process = None      # subprocess.Popen 객체
-        self.connected = False   # 연결 상태
-        
-    def connect(self) -> bool:
-        """SQLcl 프로세스 시작 및 DB 연결"""
-        
-    def execute(self, sql: str, timeout: int = 60) -> str:
-        """SQL 실행 및 결과 반환 (CSV 형식)"""
-        
-    def disconnect(self):
-        """세션 종료"""
+class PostgresManager:
+    """psycopg_pool.AsyncConnectionPool 을 래핑한 DB 접근 계층"""
 
-# MCP 도구
-@mcp.tool()
-def execute_sql(sql: str) -> str: ...
+    async def connect(self) -> None:
+        """비동기 커넥션 풀 초기화"""
 
-@mcp.tool()
-def get_tables() -> str: ...
+    async def close(self) -> None:
+        """커넥션 풀 종료"""
 
-@mcp.tool()
-def describe_table(table_name: str) -> str: ...
+    async def list_tables(self) -> List[Dict[str, Any]]:
+        """information_schema에서 테이블 목록 조회"""
 
-@mcp.tool()
-def get_status() -> str: ...
+    async def describe_table(self, table_name, schema='public') -> List[Dict]:
+        """테이블 컬럼 구조 조회"""
+
+    async def run_query(self, sql: str) -> List[Dict[str, Any]]:
+        """임의 SQL 실행 후 결과 반환"""
+
+
+class MCPServer:
+    """MCP Server 인스턴스. stdio 또는 SSE 모드로 실행"""
+
+    def setup_handlers(self):
+        """MCP 도구 등록 (query, list_tables, describe_table)"""
+
+    async def run_stdio(self):
+        """stdio 모드로 서버 실행 (Claude Desktop용)"""
+
+    async def run_sse(self):
+        """SSE 모드로 서버 실행 (Streamlit 웹 UI용)"""
 ```
 
 ### streamlit_app.py 상세
@@ -153,9 +157,6 @@ def clean_sql_response(content: str) -> str:
 # 차트 감지
 def detect_chart_request(query: str) -> tuple[bool, str]:
     """쿼리에서 차트 유형 감지"""
-
-def extract_chart_title(query: str) -> str:
-    """쿼리에서 차트 제목 추출"""
 ```
 
 ---
@@ -166,172 +167,82 @@ def extract_chart_title(query: str) -> str:
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `DB_CONNECTION` | - | 전체 연결 문자열 (우선) |
-| `DB_HOST` | `localhost` | 호스트 |
-| `DB_PORT` | `11521` | 포트 |
-| `DB_SERVICE` | `ORCL` | 서비스명 |
-| `DB_USER` | - | 사용자 |
-| `DB_PASSWORD` | - | 비밀번호 |
-| `SQLCL_PATH` | `C:\...\sql.exe` | SQLcl 경로 |
-| `MCP_SERVER_HOST` | `127.0.0.1` | 서버 호스트 |
-| `MCP_SERVER_PORT` | `8765` | 서버 포트 |
-| `ANTHROPIC_API_KEY` | - | Claude API 키 |
-| `OPENAI_API_KEY` | - | OpenAI API 키 |
-| `DEFAULT_AI_MODEL` | `claude-haiku-4-5-20251001` | 기본 AI 모델 |
-| `SQLCL_TIMEOUT` | `60` | SQL 실행 타임아웃(초) |
-
-### SQLcl 초기화 설정
-
-```sql
-SET PAGESIZE 50000
-SET LINESIZE 32767
-SET LONG 50000
-SET LONGCHUNKSIZE 50000
-SET TRIMSPOOL ON
-SET TRIMOUT ON
-SET FEEDBACK OFF
-SET HEADING ON
-SET SQLFORMAT csv
-```
+| `DB_CONNECTION` | (자동 조합) | 전체 연결 문자열 (우선 적용) |
+| `DB_HOST` | `localhost` | PostgreSQL 호스트 |
+| `DB_PORT` | `5432` | PostgreSQL 포트 |
+| `DB_NAME` | `postgres` | 데이터베이스명 |
+| `DB_USER` | `postgres` | 사용자명 |
+| `DB_PASSWORD` | _(빈 값)_ | 비밀번호 |
+| `MCP_SERVER_HOST` | `127.0.0.1` | SSE 서버 호스트 |
+| `MCP_SERVER_PORT` | `8765` | SSE 서버 포트 |
+| `ANTHROPIC_API_KEY` | - | Claude API 키 (Streamlit용) |
+| `OPENAI_API_KEY` | - | OpenAI API 키 (Streamlit용) |
+| `LOG_LEVEL` | `INFO` | 로깅 수준 |
 
 ---
 
 ## 🗃️ 데이터베이스 스키마
 
-### 주요 테이블
+### 인사관리 테이블
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           INMAST (직원 마스터)                        │
-├─────────────────────────────────────────────────────────────────────┤
-│  EMPL_NUMB    VARCHAR2   PK   사번                                   │
-│  EMPL_NAME    VARCHAR2        이름                                   │
-│  DEPA_CODE    VARCHAR2   FK   부서코드 → ZME.DEPA_CODE               │
-│  IBSA_DATE    VARCHAR2        입사일 (YYYYMMDD)                      │
-│  TESA_DATE    VARCHAR2        퇴사일 (YYYYMMDD, NULL=재직)           │
-│  SEX_GUBN     VARCHAR2        성별 ('1'=남, '2'=여)                  │
-│  BRTH_DATE    VARCHAR2        생년월일 (YYYYMMDD)                    │
-│  EMPL_DUTY    VARCHAR2   FK   직위코드 → INTONG (150xx)              │
-│  EMPL_JKGB    VARCHAR2   FK   직급코드 → INTONG (151xx)              │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│                           ZME (부서 마스터)                           │
-├─────────────────────────────────────────────────────────────────────┤
-│  DEPA_CODE    VARCHAR2   PK   부서코드                               │
-│  DEPA_NAME    VARCHAR2        부서명                                 │
-│  PRNT_NAME    VARCHAR2        상위부서명                             │
-│  ORGA_SYST    VARCHAR2        조직체계                               │
-│  APPL_DATE    VARCHAR2        적용일자                               │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│                         INTONG (코드 마스터)                          │
-├─────────────────────────────────────────────────────────────────────┤
-│  TONG_CODE    VARCHAR2   PK   코드                                   │
-│  TONG_SECT    VARCHAR2        카테고리 ('150'=직위, '151'=직급)      │
-│  TONG_DETA    VARCHAR2        상세코드                               │
-│  TONG_1NAM    VARCHAR2        코드명                                 │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                         인사관리                              │
+├────────────────────────────────────────────────────────────┤
+│  사번         VARCHAR(20)   PK   직원 고유 코드 (YYYY+NNN)    │
+│  이름         VARCHAR(50)        이름                        │
+│  부서         VARCHAR(50)        소속 부서 (팀 단위)          │
+│  직급         VARCHAR(50)        직급 (사원~팀장)             │
+│  입사일       DATE               입사 날짜                    │
+│  급여         INTEGER            월급여 (원)                  │
+│  전화번호     VARCHAR(20)        연락처 (010-XXXX-XXXX)       │
+│  이메일       VARCHAR(100)       회사 이메일                   │
+│  성별         VARCHAR(10)        성별 (남/여)                 │
+│  생년월일     DATE               생년월일                     │
+└────────────────────────────────────────────────────────────┘
 ```
 
-### 테이블 관계
+### 컬럼별 계산식
 
-```
-INMAST ─────┬───── ZME (부서)
-  │         │      M.DEPA_CODE = Z.DEPA_CODE
-  │         │
-  │         └───── INTONG (직위)
-  │                M.EMPL_DUTY = T.TONG_CODE
-  │
-  └─────────────── INTONG (직급)
-                   M.EMPL_JKGB = T.TONG_CODE
+```sql
+-- 근속연수 (컬럼 아님, 계산)
+EXTRACT(YEAR FROM AGE(CURRENT_DATE, 입사일))
+
+-- 연령 / 나이 (컬럼 아님, 계산)
+EXTRACT(YEAR FROM AGE(CURRENT_DATE, 생년월일))
 ```
 
 ---
 
 ## 🔧 SQL 생성 규칙
 
-### 날짜 처리
+### PostgreSQL 쿼리 패턴
 
 ```sql
--- 안전한 날짜 변환 (DEFAULT NULL ON CONVERSION ERROR)
-TO_DATE(M.IBSA_DATE DEFAULT NULL ON CONVERSION ERROR, 'YYYYMMDD')
+-- CTE를 활용한 그룹 & 정렬 (ORDER BY 별칭 이슈 회피)
+WITH cte AS (
+    SELECT
+        CASE WHEN ... THEN 'A' ELSE 'B' END AS label,
+        CASE WHEN ... THEN 1 ELSE 2 END AS sort_key
+    FROM 인사관리
+)
+SELECT label, COUNT(*) FROM cte
+GROUP BY label, sort_key
+ORDER BY sort_key;
 
--- 근속연수 계산
-ROUND(MONTHS_BETWEEN(SYSDATE, 
-  TO_DATE(M.IBSA_DATE DEFAULT NULL ON CONVERSION ERROR, 'YYYYMMDD')
-) / 12, 1) AS AVG_TENURE
-
--- 나이 계산
-TRUNC(MONTHS_BETWEEN(SYSDATE, 
-  TO_DATE(M.BRTH_DATE DEFAULT NULL ON CONVERSION ERROR, 'YYYYMMDD')
-) / 12) AS AGE
-```
-
-### 그룹 쿼리 패턴
-
-```sql
--- 연령대별 (서브쿼리 패턴)
-SELECT AGE_GROUP, COUNT(*) AS EMP_COUNT 
-FROM (
-  SELECT CASE 
-    WHEN AGE < 30 THEN '20대' 
-    WHEN AGE < 40 THEN '30대' 
-    WHEN AGE < 50 THEN '40대' 
-    WHEN AGE < 60 THEN '50대' 
-    ELSE '60대 이상' 
-  END AS AGE_GROUP
-  FROM (
-    SELECT TRUNC(MONTHS_BETWEEN(SYSDATE, 
-      TO_DATE(M.BRTH_DATE DEFAULT NULL ON CONVERSION ERROR, 'YYYYMMDD')
-    ) / 12) AS AGE 
-    FROM INMAST M 
-    WHERE M.BRTH_DATE IS NOT NULL
-  )
-) 
-GROUP BY AGE_GROUP 
-ORDER BY DECODE(AGE_GROUP, '20대', 1, '30대', 2, '40대', 3, '50대', 4, 5)
-
--- 근속연수 구간별 (서브쿼리 패턴)
-SELECT TENURE_GROUP, COUNT(*) AS EMP_COUNT 
-FROM (
-  SELECT 
-    CASE 
-      WHEN TENURE < 1 THEN '1년 미만' 
-      WHEN TENURE < 3 THEN '1~3년' 
-      WHEN TENURE < 5 THEN '3~5년' 
-      WHEN TENURE < 10 THEN '5~10년' 
-      WHEN TENURE < 15 THEN '10~15년' 
-      WHEN TENURE < 20 THEN '15~20년' 
-      ELSE '20년 이상' 
-    END AS TENURE_GROUP,
-    CASE 
-      WHEN TENURE < 1 THEN 1 
-      WHEN TENURE < 3 THEN 2 
-      WHEN TENURE < 5 THEN 3 
-      WHEN TENURE < 10 THEN 4 
-      WHEN TENURE < 15 THEN 5 
-      WHEN TENURE < 20 THEN 6 
-      ELSE 7 
-    END AS SORT_ORDER
-  FROM (
-    SELECT ROUND(MONTHS_BETWEEN(SYSDATE, 
-      TO_DATE(M.IBSA_DATE DEFAULT NULL ON CONVERSION ERROR, 'YYYYMMDD')
-    ) / 12, 1) AS TENURE 
-    FROM INMAST M 
-    WHERE M.IBSA_DATE IS NOT NULL
-  )
-) 
-GROUP BY TENURE_GROUP, SORT_ORDER 
-ORDER BY SORT_ORDER
+-- 부서별 평균 근속연수
+SELECT 부서,
+       COUNT(*) AS 인원수,
+       ROUND(AVG(EXTRACT(YEAR FROM AGE(CURRENT_DATE, 입사일))), 1) AS 평균근속연수
+FROM 인사관리
+GROUP BY 부서
+ORDER BY 인원수 DESC
+LIMIT 5;
 ```
 
 ---
 
-## 📊 차트 설정
-
-### 차트 키워드 매핑
+## 📊 차트 키워드 매핑
 
 | 키워드 | 차트 타입 | Plotly 함수 |
 |--------|----------|-------------|
@@ -340,24 +251,21 @@ ORDER BY SORT_ORDER
 | 라인, 선, 추이, 추세 | `line` | `px.line()` |
 | 영역, area | `area` | `px.area()` |
 
-### Plotly 설정
-
-```python
-# 데이터 순서 유지
-fig.update_xaxes(
-    categoryorder='array', 
-    categoryarray=df[label_col].tolist()
-)
-
-# 고유 key로 차트 ID 충돌 방지
-st.plotly_chart(fig, use_container_width=True, key=f"chart_{uuid.uuid4().hex[:8]}")
-```
-
 ---
 
 ## 🔌 MCP 프로토콜
 
-### SSE 모드 (기본)
+### stdio 모드 (Claude Desktop — 기본)
+
+```
+Claude Desktop                  Server
+  │                               │
+  │──── stdin: JSON-RPC ─────────►│  요청
+  │◄─── stdout: JSON-RPC ─────────│  응답
+  │                               │
+```
+
+### SSE 모드 (Streamlit — `--sse` 옵션)
 
 ```
 Client                          Server
@@ -370,33 +278,24 @@ Client                          Server
   │                               │
 ```
 
-### stdio 모드
-
-```
-Claude Desktop                  Server
-  │                               │
-  │──── stdin: JSON-RPC ─────────►│  요청
-  │◄─── stdout: JSON-RPC ─────────│  응답
-  │                               │
-```
-
 ---
 
-## 🛡️ 기술 스택 상세
+## 🛡️ 기술 스택
 
 | 분류 | 기술 | 버전 | 용도 |
 |------|------|------|------|
 | **언어** | Python | 3.10+ | 메인 언어 |
-| **MCP** | mcp | 1.0.0+ | Model Context Protocol |
-| **웹 서버** | Starlette | 0.27+ | SSE 서버 |
-| **ASGI** | Uvicorn | 0.23+ | ASGI 서버 |
-| **HTTP** | httpx | 0.24+ | SSE 클라이언트 |
-| **UI** | Streamlit | 1.28+ | 웹 UI |
-| **차트** | Plotly | 5.18+ | 인터랙티브 차트 |
+| **MCP** | mcp (SDK) | 1.26+ | Model Context Protocol |
+| **DB 드라이버** | psycopg 3 | 3.2+ | PostgreSQL 비동기 접속 |
+| **DB 풀링** | psycopg_pool | 3.2+ | AsyncConnectionPool |
+| **웹 서버** | Starlette | 0.52+ | SSE 서버 |
+| **ASGI** | Uvicorn | 0.40+ | ASGI 서버 |
+| **UI** | Streamlit | 1.54+ | 웹 UI |
+| **차트** | Plotly | 6.5+ | 인터랙티브 차트 |
 | **데이터** | Pandas | 2.0+ | 데이터프레임 |
-| **AI** | Anthropic | 0.18+ | Claude API |
-| **AI** | OpenAI | 1.0+ | GPT API |
-| **DB** | SQLcl | 24.1+ | Oracle CLI |
+| **AI** | Anthropic | 0.79+ | Claude API |
+| **AI** | OpenAI | 2.17+ | GPT API |
+| **HTTP** | httpx | 0.28+ | SSE 클라이언트 |
 | **환경** | python-dotenv | 1.0+ | 환경변수 로드 |
 
 ---
@@ -406,20 +305,15 @@ Claude Desktop                  Server
 ### MCP 도구 응답 형식
 
 ```python
-# execute_sql
-{
-    "success": True/False,
-    "data": "CSV 형식 결과" | "ERROR: 메시지"
-}
+# query — SQL 실행 결과 (JSON)
+[{"column1": "value1", "column2": 123}, ...]
 
-# get_tables
-"TABLE_NAME\ntable1\ntable2\n..."
+# list_tables — 테이블 목록
+[{"table_schema": "public", "table_name": "인사관리"}, ...]
 
-# describe_table
-"COLUMN_NAME,DATA_TYPE,NULLABLE\ncol1,VARCHAR2,Y\n..."
-
-# get_status
-"Connected to: user@host:port/service" | "Not connected"
+# describe_table — 컬럼 구조
+[{"column_name": "사번", "data_type": "character varying",
+  "is_nullable": "NO", "column_default": null}, ...]
 ```
 
 ### Streamlit 세션 상태
@@ -443,4 +337,4 @@ MIT License
 
 ---
 
-*Generated: 2025-12-03*
+*Generated: 2026-02-09*
