@@ -1,6 +1,6 @@
 # PostgreSQL MCP AI Explorer — 기술 구조 및 사양
 
-> 버전: 1.1.0 | 최종 수정: 2026-02-09
+> 버전: 1.2.0 | 최종 수정: 2026-02-09
 
 ---
 
@@ -97,9 +97,9 @@ Claude Desktop ◄──stdin/stdout──► MCP Server ◄──psycopg──�
 
 | 파일 | 역할 | 주요 클래스/함수 |
 |------|------|------------------|
-| `postgresql_mcp/server.py` | MCP 서버 | `PostgresManager`, `MCPServer`, `main()` |
-| `streamlit_app.py` | 웹 UI | `display_data()`, `display_chart()`, `generate_sql_from_nl()` |
-| `config.py` | 통합 설정 | 환경변수, DB 스키마, AI 모델, SQL 생성 규칙 |
+| `src/server.py` | MCP 서버 | `PostgresManager`, `MCPServer`, `main()` |
+| `src/streamlit_app.py` | 웹 UI | `display_data()`, `display_chart()`, `generate_sql_from_nl()` |
+| `src/config.py` | 통합 설정 | 환경변수, DB 스키마, AI 모델, SQL 생성 규칙 |
 | `scripts/setup_demo_data.py` | 데모 데이터 | 인사관리 테이블 생성 + 50여 명 데이터 삽입 |
 
 ### server.py 상세
@@ -137,7 +137,7 @@ class MCPServer:
         """SSE 모드로 서버 실행 (Streamlit 웹 UI용)"""
 ```
 
-### streamlit_app.py 상세
+### src/streamlit_app.py 상세
 
 ```python
 # 데이터 표시

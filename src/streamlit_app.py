@@ -5,12 +5,13 @@ PostgreSQL MCP AI Explorer — Streamlit 웹 UI
 MCP SSE 모드로 백엔드 서버와 통신합니다.
 
 사용법:
-    1. MCP 서버 시작: poetry run python -m postgresql_mcp.server --sse
-    2. Streamlit 앱 : poetry run streamlit run streamlit_app.py
+    1. MCP 서버 시작: poetry run python -m src.server --sse
+    2. Streamlit 앱 : poetry run streamlit run src/streamlit_app.py
 """
 
 import streamlit as st
 import os
+import sys
 import asyncio
 import pandas as pd
 import re
@@ -20,9 +21,11 @@ import json
 from io import StringIO
 from typing import List, Dict, Any, Tuple, Optional
 
-from config import (
+# Streamlit 은 스크립트로 직접 실행되므로, 패키지 루트를 sys.path 에 추가
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from src.config import (
     SERVER_URL,
-    AI_MODELS, MODEL_DISPLAY, PAGE_CONFIG, DEFAULT_MODEL,
+    AI_MODELS, MODEL_DISPLAY, MODEL_PROVIDERS, PAGE_CONFIG, DEFAULT_MODEL,
     DB_SCHEMA_INFO, SQL_GENERATION_RULES,
     CHART_KEYWORDS, LINE_CHART_KEYWORDS,
     PIE_CHART_KEYWORDS, AREA_CHART_KEYWORDS, APP_VERSION
@@ -325,6 +328,16 @@ Context:
     
     if model_name.startswith("claude"):
         return _generate_sql_claude(nl_query, system_prompt, model_name, chat_history)
+
+    # 커스텀 OpenAI-호환 엔드포인트 (Qwen 등)
+    provider_cfg = MODEL_PROVIDERS.get(model_name)
+    if provider_cfg and provider_cfg["provider"] == "openai-compatible":
+        return _generate_sql_openai(
+            nl_query, system_prompt, model_name, chat_history,
+            api_base=provider_cfg["apiBase"],
+            api_key=provider_cfg["apiKey"],
+        )
+
     return _generate_sql_openai(nl_query, system_prompt, model_name, chat_history)
 
 
@@ -361,17 +374,23 @@ def _generate_sql_claude(nl_query: str, system_prompt: str, model_name: str, cha
         return f"-- Claude Error: {str(e)}"
 
 
-def _generate_sql_openai(nl_query: str, system_prompt: str, model_name: str, chat_history=None) -> str:
-    """OpenAI로 SQL 생성"""
+def _generate_sql_openai(nl_query: str, system_prompt: str, model_name: str, chat_history=None,
+                         api_base: str = None, api_key: str = None) -> str:
+    """OpenAI(및 OpenAI-호환 API)로 SQL 생성"""
     if not HAS_OPENAI:
         return "-- openai 라이브러리가 설치되지 않았습니다."
     
-    api_key = os.getenv("OPENAI_API_KEY", "")
+    # 커스텀 엔드포인트가 아닌 경우 환경변수에서 API 키 로드
+    if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         return "-- OPENAI_API_KEY가 설정되지 않았습니다."
     
     try:
-        client = openai.OpenAI(api_key=api_key)
+        client_kwargs = {"api_key": api_key}
+        if api_base:
+            client_kwargs["base_url"] = api_base
+        client = openai.OpenAI(**client_kwargs)
         messages = [{"role": "system", "content": system_prompt}] + _build_messages(chat_history, nl_query)
         response = client.chat.completions.create(model=model_name, messages=messages)
         return clean_sql_response(response.choices[0].message.content.strip())

@@ -1,6 +1,6 @@
 # PostgreSQL MCP AI Explorer
 
-> **v1.1.0** | MCP SDK 1.26 · psycopg 3 · Streamlit
+> **v1.2.0** | MCP SDK 1.26 · psycopg 3 · Streamlit
 
 PostgreSQL 데이터베이스를 **MCP(Model Context Protocol)** 로 연결하여,  
 AI와 대화하며 자연어로 데이터를 탐색하고 시각화하는 프로젝트입니다.
@@ -63,7 +63,7 @@ Claude Desktop의 설정 파일 `%APPDATA%\Claude\claude_desktop_config.json` �
   "mcpServers": {
     "postgresql": {
       "command": "<프로젝트경로>\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "postgresql_mcp.server"],
+      "args": ["-m", "src.server"],
       "env": {
         "PYTHONPATH": "<프로젝트경로>"
       }
@@ -77,10 +77,10 @@ Claude Desktop의 설정 파일 `%APPDATA%\Claude\claude_desktop_config.json` �
 SSE 백엔드 서버와 Streamlit 프론트엔드를 각각 실행합니다.
 ```bash
 # 터미널 1: MCP 서버 (SSE 모드)
-poetry run python -m postgresql_mcp.server --sse
+poetry run python -m src.server --sse
 
 # 터미널 2: Streamlit 앱
-poetry run streamlit run streamlit_app.py
+poetry run streamlit run src/streamlit_app.py
 ```
 
 ---
@@ -101,17 +101,17 @@ poetry run streamlit run streamlit_app.py
 
 ```text
 PostgreSQL_MCP/
-├── postgresql_mcp/        # MCP 서버 패키지
-│   ├── __init__.py        #   패키지 메타 (버전 정보)
-│   └── server.py          #   MCP 서버 핵심 로직 (stdio + SSE 전송)
+├── src/                       # 핵심 패키지 (서버 + 설정 + 웹 UI)
+│   ├── __init__.py            #   패키지 메타 (버전 정보)
+│   ├── server.py              #   MCP 서버 핵심 로직 (stdio + SSE 전송)
+│   ├── config.py              #   통합 설정 (DB, MCP, AI 프롬프트 등)
+│   └── streamlit_app.py       #   Streamlit 웹 UI (채팅 + 차트)
 ├── scripts/
-│   └── setup_demo_data.py #   데모 데이터(인사관리) 생성 스크립트
+│   └── setup_demo_data.py     #   데모 데이터(인사관리) 생성 스크립트
 ├── docs/
-│   └── ARCHITECTURE.md    #   시스템 아키텍처 문서
-├── streamlit_app.py       # Streamlit 웹 UI (채팅 + 차트)
-├── config.py              # 통합 설정 (DB, MCP, AI 프롬프트 등)
-├── query.md               # 추천 자연어 쿼리 예시 모음
-├── pyproject.toml         # Poetry 의존성 관리
-├── claude_desktop_config.json  # Claude Desktop 설정 예시
-└── archive/               # 이전 버전 / 디버깅용 파일 보관
+│   └── ARCHITECTURE.md        #   시스템 아키텍처 문서
+├── query.md                   # 추천 자연어 쿼리 예시 모음
+├── pyproject.toml             # Poetry 의존성 관리
+├── claude_desktop_config.json # Claude Desktop 설정 예시
+└── archive/                   # 이전 버전 / 디버깅용 파일 보관
 ```

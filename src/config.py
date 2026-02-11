@@ -16,9 +16,10 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables
-# Ensure .env is loaded from the project root (where config.py resides)
+# config.py가 src/ 안에 있으므로 .env는 한 단계 위(프로젝트 루트)에서 로드
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_PATH = os.path.join(BASE_DIR, ".env")
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 
@@ -67,7 +68,8 @@ AI_MODELS = [
     "claude-opus-4-5-20251101",
     "gpt-5",
     "gpt-5-1",
-    "gpt-5-2"
+    "gpt-5-2",
+    "Qwen/Qwen3-Coder-Next-FP8",
 ]
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -78,7 +80,18 @@ MODEL_DISPLAY = {
     "claude-opus-4-5-20251101": "Claude 4.5 Opus ",
     "gpt-5": "GPT-5",
     "gpt-5-1": "GPT-5-1",
-    "gpt-5-2": "GPT-5-2"
+    "gpt-5-2": "GPT-5-2",
+    "Qwen/Qwen3-Coder-Next-FP8": "Qwen3-Coder-Next",
+}
+
+# 커스텀 OpenAI-호환 엔드포인트를 사용하는 모델 설정
+# provider: "openai-compatible" → OpenAI SDK를 사용하되 apiBase/apiKey를 오버라이드
+MODEL_PROVIDERS = {
+    "Qwen/Qwen3-Coder-Next-FP8": {
+        "provider": "openai-compatible",
+        "apiBase": os.getenv("QWEN_API_BASE", "http://192.168.0.201:8000/v1"),
+        "apiKey": os.getenv("QWEN_API_KEY", "EMPTY"),
+    },
 }
 
 # Streamlit Page Config
@@ -113,7 +126,8 @@ SQL_GENERATION_RULES = """
 3. Limit results to 100 rows unless specified otherwise.
 4. IMPORTANT: Only use table names provided in the "Available Tables" list. Do NOT hallucinate table names like 'employees' or 'departments' if they are not listed.
 5. Schema/Calculated Columns Hints:
-   - Table '인사관리' has columns: id, 이름, 부서, 직급, 입사일, 급여, 전화번호, 이메일, 성별, 생년월일.
+   - Table '인사관리' has columns: 사번(VARCHAR PK), 이름, 부서, 직급, 입사일, 급여, 전화번호, 이메일, 성별, 생년월일.
+   - There is NO 'id' column. The primary key is '사번' (employee number, e.g. '2019001').
    - '근속연수' (Years of Service) is NOT a column. Calculate it as: EXTRACT(YEAR FROM AGE(CURRENT_DATE, 입사일))
    - '연령'/'나이' (Age) is NOT a column. Calculate it as: EXTRACT(YEAR FROM AGE(CURRENT_DATE, 생년월일))
 6. PREFER Common Table Expressions (WITH clauses) for complex groupings/orderings.
@@ -126,4 +140,7 @@ SQL_GENERATION_RULES = """
          FROM table
      )
      SELECT label, count(*) FROM cte GROUP BY label, sort_key ORDER BY sort_key
+7. UNION ALL with ORDER BY/LIMIT: In PostgreSQL, each SELECT in a UNION must be wrapped in parentheses if it has ORDER BY or LIMIT.
+   - WRONG:  SELECT ... ORDER BY x LIMIT 3 UNION ALL SELECT ... ORDER BY x LIMIT 3
+   - CORRECT: (SELECT ... ORDER BY x LIMIT 3) UNION ALL (SELECT ... ORDER BY x LIMIT 3)
 """

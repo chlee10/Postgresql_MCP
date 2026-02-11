@@ -43,9 +43,8 @@ if sys.platform == 'win32':
     sys.stdin.reconfigure(encoding='utf-8')
     sys.stdout.reconfigure(encoding='utf-8')
 
-# 상위 디렉토리(config.py 위치)를 import 경로에 추가
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import DB_CONNECTION, LOG_LEVEL, SERVER_HOST, SERVER_PORT
+# config.py 는 같은 패키지(src/) 안에 위치
+from .config import DB_CONNECTION, LOG_LEVEL, SERVER_HOST, SERVER_PORT
 
 # ---------------------------------------------------------------------------
 # 로깅 설정

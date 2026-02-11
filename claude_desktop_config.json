@@ -4,7 +4,7 @@
       "command": "C:\\Users\\chiho\\OneDrive\\AI_PJTs\\RDB\\PostgreSQL_MCP\\.venv\\Scripts\\python.exe",
       "args": [
         "-m",
-        "postgresql_mcp.server"
+        "src.server"
       ],
       "env": {
         "PYTHONPATH": "C:\\Users\\chiho\\OneDrive\\AI_PJTs\\RDB\\PostgreSQL_MCP"
